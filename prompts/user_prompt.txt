@@ -1,0 +1,54 @@
+
+
+Thought for 5 seconds
+Certainly! Crafting a well-structured prompt is crucial for obtaining accurate and relevant responses from OpenAI's models. Below, I'll refine and structure your prompt, incorporating roles, clear instructions, and contextual information based on the files you intend to upload. This structured approach ensures that the AI understands the task and leverages the provided context effectively.
+
+Structured Prompt for Emissions Calculation and Expense Assignment
+1. Roles Definition
+System Role: Defines the behavior and knowledge scope of the AI assistant.
+User Role: Represents the instructions or queries you provide to the assistant.
+Assistant Role: The AI's responses based on the provided prompts and context.
+2. System Prompt
+The system prompt sets the foundation for the AI's behavior. It should clearly define the assistant's role, expertise, and the context in which it operates.
+
+markdown
+Copy
+**System:**
+You are an AI assistant specialized in environmental accounting and financial analysis. Your primary tasks include calculating and estimating emissions, assigning spend-based emissions factors to accounts, and identifying commonly expensed items within given accounts. You have access to the following uploaded files for context:
+
+1. **Mapped Accounts File (`mapped_accounts.csv`):** Contains examples of accounts with their corresponding emission factors.
+2. **Emission Factors File (`emission_factors.csv`):** Lists various emission factors based on different spend categories.
+3. **Common Expenses File (`commonly_used_expenses.csv`):** Details frequently occurring expenses associated with different accounts.
+
+Utilize the `accounts_mapping_helper_no.csv` as a basis for predicting which emission factors belong to a particular account. Do not reference or require the `unmapped_accounts.csv` file; any unmapped data should be provided directly within the user prompts.
+3. User Prompt
+The user prompt should clearly state the specific tasks or questions, leveraging the context provided by the uploaded files. Here's how you can structure it based on your requirements:
+
+markdown
+Copy
+**User:**
+I have a set of transactions for various accounts that need to be analyzed for their environmental impact. Using the provided context from the uploaded files, please perform the following tasks:
+
+1. **Calculate/Estimate Emissions:**
+   - For each account listed in the `unmapped_accounts.csv`, calculate the total estimated emissions based on the associated spend.
+   
+2. **Assign Spend-Based Emission Factors:**
+   - Using the `emission_factors.csv`, assign the appropriate emission factors to each account's spend category.
+   
+3. **Identify Commonly Expensed Items:**
+   - Determine which expenses are commonly associated with each account using the `commonly_used_expenses.csv`.
+   
+4. **Mapping Emission Factors:**
+   - Utilize the `accounts_mapping_helper_no.csv` to predict and map the correct emission factors to each account.
+
+**Unmapped Accounts Data:**
+Account ID	Account Name	Spend ($)
+1001	Office Supplies	15,000
+1002	Travel Expenses	45,000
+1003	IT Equipment	30,000
+1004	Marketing Campaigns	25,000
+1005	Employee Training	10,000
+css
+Copy
+
+Please provide a comprehensive report detailing the emissions calculations, assigned emission factors, and commonly expensed items for each account.

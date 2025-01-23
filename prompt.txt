@@ -1,0 +1,9 @@
+- calculate / estimate emissions 
+- assign a spend based emissions factor
+- what would commonly expense in a given account
+three files 
+- mapped account is example
+- file with emission factors
+- file with commonly used expenses
+
+use the accounts_mapping_helper file as a basis for prediciting which emissions factors belong to a particular account 

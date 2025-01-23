@@ -1,0 +1,19 @@
+accountNumber,accountName,mapping
+5900,"Gifts to employees, deductible","manufactureOfConsumerElectronics, manufactureOfFurnitureAndSportsGoods, hotelAndRestaurantServices, recreationalAndSportingServices, manufactureOfTextiles, manufactureOfClothing, manufactureOfLeatherAndLeatherProducts, manufactureOfCeramicProducts, manufactureOfPaperAndPaperProducts, manufactureOfGlassAndGlassProducts"
+5905,"Gifts to employees, non-deductible","manufactureOfConsumerElectronics, manufactureOfFurnitureAndSportsGoods, hotelAndRestaurantServices, recreationalAndSportingServices, manufactureOfTextiles, manufactureOfClothing, manufactureOfLeatherAndLeatherProducts, manufactureOfCeramicProducts, manufactureOfPaperAndPaperProducts, manufactureOfGlassAndGlassProducts"
+5910,Canteen costs,hotelAndRestarauntServices
+5915,Overtime meals,"hotelAndRestarauntServices, foodProducts, beverages"
+5990,Other personnel costs,"recreationalAndSportingServices, healthAndSocialWorkServices"
+6100,"Freight, transport costs and insurance for shipment of goods",0.64*seaAndCoastalWaterTransportServices+ 0.09*otherLandTransportServices + 0.02*railwayServices + 0.2*warehousingAndTravelAgencyServices + 0.05*insurance
+6110,Customs duty and forwarding cost for shipment of goods,warehousingAndTravelAgencyServices
+6190,Other freight and transport cost related to sales,"warehousingAndTravelAgencyServices, insurance"
+6200,Electricity,0.83*electricityHydro + 0.11*electricityWind + 0.005*electricityGas + 0.005*electricityCoal + 0.02*electricityNuclear+ 0.03*electricityBiomass
+6210,Gas,liquefiedPetroleumGas
+6220,Heating oil,fuelOil
+6230,"Coal, coke",bitumen
+6240,Firewood,wood
+6250,"Petrol, diesel fuel",motorGasoline
+6260,Water,waterSupply
+6290,Other fuel,otherPetroleumProducts
+6300,"Rent, premises",realEstateServices
+6320,"Waste disposal, water, sewage etc.","waterSupply, otherBusinessServices"
