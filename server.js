@@ -61,11 +61,7 @@ async function uploadFileToOpenAI(filePath, purpose) {
     const absolutePath = path.resolve(__dirname, filePath);
 
     // Check if file exists
-    try {
-      await fs.access(absolutePath);
-    } catch (error) {
-      throw new Error(`File not found: ${filePath}`);
-    }
+    await fs.access(absolutePath);
 
     // Validate file extension based on purpose
     const allowedFileTypes = {
@@ -89,7 +85,7 @@ async function uploadFileToOpenAI(filePath, purpose) {
     const form = new FormData();
     form.append("file", fileStream, path.basename(filePath));
     form.append("purpose", purpose);
-
+    
     const response = await axios.post("https://api.openai.com/v1/files", form, {
       headers: {
         ...form.getHeaders(),
@@ -102,33 +98,10 @@ async function uploadFileToOpenAI(filePath, purpose) {
     logger.info(`Uploaded file: ${filePath}`, response.data);
     return response.data;
   } catch (error) {
-    // Enhanced error handling
-    if (error.response) {
-      // The request was made and the server responded with a status code
-      // that falls out of the range of 2xx
-      logger.error(`Error uploading file: ${filePath}`, {
-        status: error.response.status,
-        statusText: error.response.statusText,
-        data: error.response.data,
-      });
-      throw new Error(
-        error.response.data?.error?.message ||
-          error.response.statusText ||
-          "Upload failed with server error"
-      );
-    } else if (error.request) {
-      // The request was made but no response was received
-      logger.error(`No response received for file upload: ${filePath}`, {
-        request: error.request,
-      });
-      throw new Error("No response received from OpenAI API");
-    } else {
-      // Something happened in setting up the request
-      logger.error(`Error setting up file upload: ${filePath}`, {
-        message: error.message,
-      });
-      throw new Error(error.message);
-    }
+    logger.error(`Error uploading file: ${filePath}`, {
+      message: error.response ? error.response.data : error.message,
+    });
+    throw error;
   }
 }
 
@@ -153,6 +126,7 @@ async function getFilesContent(filePaths) {
   }
 }
 
+
 // POST /upload endpoint with validation
 app.post(
   "/upload",
@@ -171,14 +145,15 @@ app.post(
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
       logger.warn("Validation errors:", { errors: errors.array() });
-      return res.status(400).json({
-        status: "error",
-        errors: errors.array(),
-        message: "Validation failed",
-      });
+      return res.status(400).json({ errors: errors.array() });
     }
 
     const { purpose, files } = req.body;
+
+    if (!files || files.length === 0) {
+      logger.warn("No files provided for upload.");
+      return res.status(400).json({ error: "No files provided for upload." });
+    }
 
     try {
       const uploadResults = await Promise.allSettled(
@@ -194,30 +169,22 @@ app.post(
         } else {
           failedUploads.push({
             file: files[index],
-            error: result.reason.message || "Unknown error occurred",
+            reason: result.reason.response
+              ? result.reason.response.data.error.message
+              : result.reason.message,
           });
         }
       });
 
-      const response = {
-        status: failedUploads.length === 0 ? "success" : "partial_success",
-        data: {
-          successful: successfulUploads,
-          failed: failedUploads,
-        },
-      };
-
-      res.status(failedUploads.length === 0 ? 200 : 207).json(response);
+      res.json({
+        successfulUploads,
+        failedUploads,
+      });
     } catch (error) {
       logger.error("Failed to upload files to OpenAI:", {
-        error: error.message,
-        stack: error.stack,
+        message: error.message,
       });
-      res.status(500).json({
-        status: "error",
-        message: "Failed to upload files to OpenAI",
-        error: error.message,
-      });
+      res.status(500).json({ error: "Failed to upload files to OpenAI." });
     }
   }
 );

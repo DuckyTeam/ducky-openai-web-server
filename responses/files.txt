@@ -1,0 +1,38 @@
+{
+    "object": "list",
+    "data": [
+        {
+            "object": "file",
+            "id": "file-CyqXDPfyVeD4UJ4HAHbaQ7",
+            "purpose": "fine-tune",
+            "filename": "mapped_accounts.jsonl",
+            "bytes": 1752,
+            "created_at": 1737635040,
+            "status": "processed",
+            "status_details": null
+        },
+        {
+            "object": "file",
+            "id": "file-7iLAYDC3gePjbadqSxSDss",
+            "purpose": "fine-tune",
+            "filename": "accounts_mapping_helper_no.jsonl",
+            "bytes": 88217,
+            "created_at": 1737635011,
+            "status": "processed",
+            "status_details": null
+        },
+        {
+            "object": "file",
+            "id": "file-FPJKnU6vc2yCUytEVRkkym",
+            "purpose": "fine-tune",
+            "filename": "emission_factors.jsonl",
+            "bytes": 8233,
+            "created_at": 1737634920,
+            "status": "processed",
+            "status_details": null
+        }
+    ],
+    "has_more": false,
+    "first_id": "file-CyqXDPfyVeD4UJ4HAHbaQ7",
+    "last_id": "file-FPJKnU6vc2yCUytEVRkkym"
+}
