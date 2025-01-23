@@ -11,7 +11,6 @@ import axios from "axios";
 import FormData from "form-data";
 import rateLimit from "express-rate-limit";
 import { body, validationResult } from "express-validator";
-import cors from "cors";
 import winston from "winston";
 
 // Handle __dirname in ESM
@@ -38,13 +37,6 @@ const logger = winston.createLogger({
 // Middleware to parse JSON bodies
 app.use(express.json());
 
-// CORS configuration (adjust origin as needed)
-const corsOptions = {
-  origin: "http://your-frontend-domain.com", // Replace with your frontend URL
-  optionsSuccessStatus: 200,
-};
-app.use(cors(corsOptions));
-
 // Rate limiting
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
@@ -52,9 +44,6 @@ const limiter = rateLimit({
   message: "Too many requests from this IP, please try again after 15 minutes.",
 });
 app.use(limiter);
-
-// Serve static files from the root directory (for index.html)
-app.use(express.static(__dirname));
 
 // OpenAI configuration using the new client
 const client = new OpenAI({
@@ -187,6 +176,133 @@ app.post(
         message: error.message,
       });
       res.status(500).json({ error: "Failed to upload files to OpenAI." });
+    }
+  }
+);
+
+/**
+ * POST /generate endpoint to handle prompt submissions.
+ * Expects:
+ * - prompt: string (the user's prompt)
+ * - unmappedAccountsData: array of objects (unmapped accounts data)
+ */
+app.post(
+  "/generate",
+  [
+    body("prompt").isString().withMessage("prompt must be a string."),
+    body("unmappedAccountsData")
+      .isArray({ min: 1 })
+      .withMessage("unmappedAccountsData must be a non-empty array."),
+    body("unmappedAccountsData.*.Account ID")
+      .exists()
+      .withMessage("Each account must have an Account ID."),
+    body("unmappedAccountsData.*.Account Name")
+      .exists()
+      .withMessage("Each account must have an Account Name."),
+    body("unmappedAccountsData.*.Spend ($)")
+      .exists()
+      .withMessage("Each account must have a Spend ($) value."),
+  ],
+  async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      logger.warn("Validation errors in /generate:", { errors: errors.array() });
+      return res.status(400).json({ errors: errors.array() });
+    }
+
+    const { prompt, unmappedAccountsData } = req.body;
+
+    // Define file paths for context
+    const contextFilePaths = [
+      "projects/mappingTest/mapped_accounts.csv",
+      "projects/mappingTest/emission_factors.csv",
+      "projects/mappingTest/commonly_used_expenses.csv",
+    ];
+
+    let fileContext = "";
+    try {
+      fileContext = await getFilesContent(contextFilePaths);
+    } catch (error) {
+      logger.error("Failed to read context files for /generate:", {
+        message: error.message,
+      });
+      return res
+        .status(500)
+        .json({ error: "Failed to read context files for prompt generation." });
+    }
+
+    // Convert unmappedAccountsData to markdown table
+    const unmappedTableHeader = "| Account ID | Account Name         | Spend ($) |\n|------------|----------------------|-----------|";
+    const unmappedTableRows = unmappedAccountsData
+      .map(
+        (account) =>
+          `| ${account["Account ID"]} | ${account["Account Name"]} | ${account["Spend ($)"]} |`
+      )
+      .join("\n");
+    const unmappedTable = `${unmappedTableHeader}\n${unmappedTableRows}`;
+
+    // Construct the full prompt
+    const fullPrompt = `
+**System:**
+You are an AI assistant specialized in environmental accounting and financial analysis. Your primary tasks include calculating and estimating emissions, assigning spend-based emission factors to accounts, and identifying commonly expensed items within given accounts. You have access to the following uploaded files for context:
+
+1. **Mapped Accounts File (`mapped_accounts.csv`)**: Contains examples of accounts with their corresponding emission factors.
+2. **Emission Factors File (`emission_factors.csv`)**: Lists various emission factors based on different spend categories.
+3. **Common Expenses File (`commonly_used_expenses.csv`)**: Details frequently occurring expenses associated with different accounts.
+
+Utilize the `accounts_mapping_helper_no.csv` as a basis for predicting which emission factors belong to a particular account. Do not reference or require the `unmapped_accounts.csv` file; any unmapped data should be provided directly within the user prompts.
+
+**User:**
+${prompt}
+
+**Unmapped Accounts Data:**
+\`\`\`
+${unmappedTable}
+\`\`\`
+    `;
+
+    // Prepare messages for OpenAI Chat Completion
+    const messages = [
+      {
+        role: "system",
+        content: `You are an AI assistant specialized in environmental accounting and financial analysis. You have access to the following context:
+
+${fileContext}`,
+      },
+      {
+        role: "user",
+        content: fullPrompt,
+      },
+    ];
+
+    // Construct the request payload
+    const requestPayload = {
+      model: "gpt-4", // Ensure you have access to this model
+      messages: messages,
+      temperature: 0.7, // Adjust as needed
+      max_tokens: 1500, // Adjust based on expected response length
+    };
+
+    // Log the request payload
+    logger.info("Generating AI response with payload:", requestPayload);
+
+    try {
+      const completion = await client.chat.completions.create(requestPayload);
+
+      const responseText = completion.choices[0].message.content;
+
+      // Log the response
+      logger.info("AI Generated Response:", responseText);
+
+      // Send the response back to the client
+      res.json({ response: responseText });
+    } catch (error) {
+      logger.error("Error generating AI response:", {
+        message: error.response ? error.response.data : error.message,
+      });
+      res
+        .status(500)
+        .json({ error: "An error occurred while generating the AI response." });
     }
   }
 );
