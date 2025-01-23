@@ -1,0 +1,18 @@
+{"accountNumber":"5900","accountName":"\"Gifts to employees","mapping":"deductible\""}
+{"accountNumber":"5905","accountName":"\"Gifts to employees","mapping":"non-deductible\""}
+{"accountNumber":"5910","accountName":"Canteen costs","mapping":"hotelAndRestarauntServices"}
+{"accountNumber":"5915","accountName":"Overtime meals","mapping":"\"hotelAndRestarauntServices"}
+{"accountNumber":"5990","accountName":"Other personnel costs","mapping":"\"recreationalAndSportingServices"}
+{"accountNumber":"6100","accountName":"\"Freight","mapping":"transport costs and insurance for shipment of goods\""}
+{"accountNumber":"6110","accountName":"Customs duty and forwarding cost for shipment of goods","mapping":"warehousingAndTravelAgencyServices"}
+{"accountNumber":"6190","accountName":"Other freight and transport cost related to sales","mapping":"\"warehousingAndTravelAgencyServices"}
+{"accountNumber":"6200","accountName":"Electricity","mapping":"0.83*electricityHydro + 0.11*electricityWind + 0.005*electricityGas + 0.005*electricityCoal + 0.02*electricityNuclear+ 0.03*electricityBiomass"}
+{"accountNumber":"6210","accountName":"Gas","mapping":"liquefiedPetroleumGas"}
+{"accountNumber":"6220","accountName":"Heating oil","mapping":"fuelOil"}
+{"accountNumber":"6230","accountName":"\"Coal","mapping":"coke\""}
+{"accountNumber":"6240","accountName":"Firewood","mapping":"wood"}
+{"accountNumber":"6250","accountName":"\"Petrol","mapping":"diesel fuel\""}
+{"accountNumber":"6260","accountName":"Water","mapping":"waterSupply"}
+{"accountNumber":"6290","accountName":"Other fuel","mapping":"otherPetroleumProducts"}
+{"accountNumber":"6300","accountName":"\"Rent","mapping":"premises\""}
+{"accountNumber":"6320","accountName":"\"Waste disposal","mapping":"water"}
