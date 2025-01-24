@@ -2,16 +2,15 @@
 import dotenv from "dotenv";
 dotenv.config();
 import express from "express";
-import OpenAI from "openai";
+import axios from "axios";
 import fs from "fs/promises";
 import path from "path";
 import { fileURLToPath } from "url";
 import { dirname } from "path";
-import axios from "axios";
-import FormData from "form-data";
 import rateLimit from "express-rate-limit";
 import { body, validationResult } from "express-validator";
 import winston from "winston";
+import { createObjectCsvWriter } from "csv-writer";
 
 // Handle __dirname in ESM
 const __filename = fileURLToPath(import.meta.url);
@@ -45,101 +44,58 @@ const limiter = rateLimit({
 });
 app.use(limiter);
 
-// OpenAI configuration using the new client
-const client = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY, // Ensure this is set in your .env file
-});
-
-/**
- * Uploads a single file to OpenAI.
- * @param {string} filePath - The path to the file to upload.
- * @param {string} purpose - The purpose of the file ('assistants', 'fine-tune', etc.).
- * @returns {Promise<Object>} - The response from OpenAI.
- */
-async function uploadFileToOpenAI(filePath, purpose) {
+// Load System Prompt
+const loadSystemPrompt = async () => {
   try {
-    const absolutePath = path.resolve(__dirname, filePath);
-
-    // Check if file exists
-    await fs.access(absolutePath);
-
-    // Validate file extension based on purpose
-    const allowedFileTypes = {
-      assistants: [".csv"],
-      "fine-tune": [".jsonl"],
-      batch: [".jsonl"],
-      vision: [".png", ".jpg", ".jpeg", ".gif"], // Example image formats
-    };
-
-    const fileExtension = path.extname(filePath).toLowerCase();
-    if (!allowedFileTypes[purpose].includes(fileExtension)) {
-      throw new Error(
-        `File type '${fileExtension}' is not allowed for purpose '${purpose}'. Allowed types: ${allowedFileTypes[
-          purpose
-        ].join(", ")}.`
-      );
-    }
-
-    const fileStream = await fs.readFile(absolutePath);
-
-    const form = new FormData();
-    form.append("file", fileStream, path.basename(filePath));
-    form.append("purpose", purpose);
-    
-    const response = await axios.post("https://api.openai.com/v1/files", form, {
-      headers: {
-        ...form.getHeaders(),
-        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-      },
-      maxContentLength: Infinity,
-      maxBodyLength: Infinity,
-    });
-
-    logger.info(`Uploaded file: ${filePath}`, response.data);
-    return response.data;
-  } catch (error) {
-    logger.error(`Error uploading file: ${filePath}`, {
-      message: error.response ? error.response.data : error.message,
-    });
-    throw error;
-  }
-}
-
-/**
- * Reads multiple files and concatenates their content.
- * @param {Array<string>} filePaths - Array of file paths to read.
- * @returns {Promise<string>} - Concatenated content of all files.
- */
-async function getFilesContent(filePaths) {
-  try {
-    const contents = await Promise.all(
-      filePaths.map(async (filePath) => {
-        const absolutePath = path.resolve(__dirname, filePath);
-        const data = await fs.readFile(absolutePath, "utf-8");
-        return data;
-      })
+    const systemPromptPath = path.join(
+      __dirname,
+      "prompts",
+      "system_prompt.txt"
     );
-    return contents.join("\n\n"); // Separate files by double newline
+    const systemPrompt = await fs.readFile(systemPromptPath, "utf-8");
+    return systemPrompt;
   } catch (error) {
-    logger.error("Error reading files:", { message: error.message });
+    logger.error("Error loading system prompt:", { message: error.message });
     throw error;
   }
-}
+};
 
+// Define CSV Schema for Mapped Accounts
+const csvHeaders = [
+  { id: "accountNumber", title: "accountNumber" },
+  { id: "accountName", title: "accountName" },
+  { id: "mapping", title: "mapping" },
+];
 
-// POST /upload endpoint with validation
+// Function to Save AI Response as CSV
+const saveResponseAsCSV = async (csvData, outputPath) => {
+  const csvWriter = createObjectCsvWriter({
+    path: outputPath,
+    header: csvHeaders,
+  });
+
+  try {
+    await csvWriter.writeRecords(csvData);
+    logger.info(`Saved AI response to CSV at ${outputPath}`);
+  } catch (error) {
+    logger.error("Error saving CSV:", { message: error.message });
+    throw error;
+  }
+};
+
+// POST /process-accounts endpoint
 app.post(
-  "/upload",
+  "/process-accounts",
   [
-    body("purpose")
-      .isIn(["assistants", "fine-tune", "batch", "vision"])
-      .withMessage(
-        "Invalid purpose. Must be one of assistants, fine-tune, batch, vision."
-      ),
-    body("files")
+    body("unmappedAccountsData")
       .isArray({ min: 1 })
-      .withMessage("Files must be provided as a non-empty array."),
-    body("files.*").isString().withMessage("Each file path must be a string."),
+      .withMessage("unmappedAccountsData must be a non-empty array."),
+    body("unmappedAccountsData.*.accountNumber")
+      .exists()
+      .withMessage("Each account must have an accountNumber."),
+    body("unmappedAccountsData.*.accountName")
+      .exists()
+      .withMessage("Each account must have an accountName."),
   ],
   async (req, res) => {
     const errors = validationResult(req);
@@ -148,173 +104,125 @@ app.post(
       return res.status(400).json({ errors: errors.array() });
     }
 
-    const { purpose, files } = req.body;
-
-    if (!files || files.length === 0) {
-      logger.warn("No files provided for upload.");
-      return res.status(400).json({ error: "No files provided for upload." });
-    }
+    const { unmappedAccountsData } = req.body;
 
     try {
-      const uploadResults = await Promise.allSettled(
-        files.map((filePath) => uploadFileToOpenAI(filePath, purpose))
+      // Load System Prompt
+      const systemPrompt = await loadSystemPrompt();
+
+      // Construct User Prompt
+      let userPrompt =
+        "Please process the following unmapped accounts and assign appropriate mappings based on historical data. Provide the output in CSV format matching the mapped_accounts.csv file structure, including columns for accountNumber, accountName, and mapping.\n\n";
+      userPrompt += "Unmapped Accounts Data:\n";
+      userPrompt += "| accountNumber | accountName | \n";
+      userPrompt += "|---------------|-------------|\n";
+      unmappedAccountsData.forEach((account) => {
+        // Escape double quotes in accountName
+        const accountName = account["accountName"].replace(/"/g, '""');
+        userPrompt += `| ${account["accountNumber"]} | "${accountName}" |\n`;
+      });
+
+      // Combine System and User Prompts
+      // Note: In Chat API, system and user prompts are separate; no need to combine them.
+      // However, system prompt is provided as a separate message.
+
+      // Send Request to OpenAI's Chat Completion API
+      const response = await axios.post(
+        "https://api.openai.com/v1/chat/completions",
+        {
+          model: "gpt-4", // Ensure your API plan supports this
+          messages: [
+            { role: "system", content: systemPrompt },
+            { role: "user", content: userPrompt },
+          ],
+          temperature: 0.3, // Adjust for determinism
+          max_tokens: 1000, // Adjust based on expected response length
+          n: 1,
+          stop: null,
+        },
+        {
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+          },
+        }
       );
 
-      const successfulUploads = [];
-      const failedUploads = [];
+      const aiResponse = response.data.choices[0].message.content;
 
-      uploadResults.forEach((result, index) => {
-        if (result.status === "fulfilled") {
-          successfulUploads.push(result.value);
-        } else {
-          failedUploads.push({
-            file: files[index],
-            reason: result.reason.response
-              ? result.reason.response.data.error.message
-              : result.reason.message,
+      // Log the AI response
+      logger.info("AI Response:", aiResponse);
+
+      // Parse AI Response to CSV Format
+      // Basic parsing assuming the AI returns well-formatted CSV
+      const lines = aiResponse.trim().split("\n");
+
+      // Validate CSV headers
+      const responseHeaders = lines[0]
+        .split(",")
+        .map((header) => header.trim().toLowerCase());
+      const expectedHeaders = ["accountnumber", "accountname", "mapping"];
+
+      const headersMatch = expectedHeaders.every(
+        (header, index) => header === responseHeaders[index]
+      );
+
+      if (!headersMatch) {
+        logger.error("AI response headers do not match the expected format.");
+        return res
+          .status(500)
+          .json({
+            error: "AI response format mismatch. Please check the AI's output.",
           });
+      }
+
+      // Process each line into JSON objects
+      const csvData = lines.slice(1).map((line) => {
+        const values = line.split(",").map((value) => value.trim());
+
+        // Handle cases where accountName might contain commas and be enclosed in quotes
+        let accountNumber, accountName, mapping;
+
+        if (values.length > 3) {
+          // Join all values beyond the first two for accountName and mapping
+          accountNumber = values[0];
+          // Assuming accountName is the second value, possibly enclosed in quotes
+          accountName = values[1].replace(/^"|"$/g, "").replace(/""/g, '"');
+          mapping = values.slice(2).join(", ");
+        } else {
+          accountNumber = values[0];
+          accountName = values[1].replace(/^"|"$/g, "").replace(/""/g, '"');
+          mapping = values[2];
         }
+
+        return {
+          accountNumber,
+          accountName,
+          mapping,
+        };
       });
 
-      res.json({
-        successfulUploads,
-        failedUploads,
-      });
+      // Define Output Path
+      const timestamp = Date.now();
+      const outputPath = path.join(
+        __dirname,
+        "results",
+        `processed_accounts_${timestamp}.csv`
+      );
+
+      // Ensure Results Directory Exists
+      await fs.mkdir(path.dirname(outputPath), { recursive: true });
+
+      // Save CSV Data
+      await saveResponseAsCSV(csvData, outputPath);
+
+      // Respond to Client
+      res.json({ message: "Accounts processed successfully.", outputPath });
     } catch (error) {
-      logger.error("Failed to upload files to OpenAI:", {
-        message: error.message,
-      });
-      res.status(500).json({ error: "Failed to upload files to OpenAI." });
-    }
-  }
-);
-
-/**
- * POST /generate endpoint to handle prompt submissions.
- * Expects:
- * - prompt: string (the user's prompt)
- * - unmappedAccountsData: array of objects (unmapped accounts data)
- */
-app.post(
-  "/generate",
-  [
-    body("prompt").isString().withMessage("prompt must be a string."),
-    body("unmappedAccountsData")
-      .isArray({ min: 1 })
-      .withMessage("unmappedAccountsData must be a non-empty array."),
-    body("unmappedAccountsData.*.Account ID")
-      .exists()
-      .withMessage("Each account must have an Account ID."),
-    body("unmappedAccountsData.*.Account Name")
-      .exists()
-      .withMessage("Each account must have an Account Name."),
-    body("unmappedAccountsData.*.Spend ($)")
-      .exists()
-      .withMessage("Each account must have a Spend ($) value."),
-  ],
-  async (req, res) => {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      logger.warn("Validation errors in /generate:", {
-        errors: errors.array(),
-      });
-      return res.status(400).json({ errors: errors.array() });
-    }
-
-    const { prompt, unmappedAccountsData } = req.body;
-
-    // Define file paths for context
-    const contextFilePaths = [
-      "projects/mappingTest/mapped_accounts.csv",
-      "projects/mappingTest/emission_factors.csv",
-      "projects/mappingTest/commonly_used_expenses.csv",
-    ];
-
-    let fileContext = "";
-    try {
-      fileContext = await getFilesContent(contextFilePaths);
-    } catch (error) {
-      logger.error("Failed to read context files for /generate:", {
-        message: error.message,
-      });
-      return res
-        .status(500)
-        .json({ error: "Failed to read context files for prompt generation." });
-    }
-
-    // Convert unmappedAccountsData to markdown table
-    const unmappedTableHeader =
-      "| Account ID | Account Name         | Spend ($) |\n|------------|----------------------|-----------|";
-    const unmappedTableRows = unmappedAccountsData
-      .map(
-        (account) =>
-          `| ${account["Account ID"]} | ${account["Account Name"]} | ${account["Spend ($)"]} |`
-      )
-      .join("\n");
-    const unmappedTable = `${unmappedTableHeader}\n${unmappedTableRows}`;
-
-    // Construct the full prompt
-    const fullPrompt = `
-**System:**
-You are an AI assistant specialized in environmental accounting and financial analysis. Your primary tasks include calculating and estimating emissions, assigning spend-based emission factors to accounts, and identifying commonly expensed items within given accounts. You have access to the following uploaded files for context:
-
-1. **Mapped Accounts File (\`mapped_accounts.csv\`)**: Contains examples of accounts with their corresponding emission factors.
-2. **Emission Factors File (\`emission_factors.csv\`)**: Lists various emission factors based on different spend categories.
-3. **Common Expenses File (\`commonly_used_expenses.csv\`)**: Details frequently occurring expenses associated with different accounts.
-
-Utilize the \`accounts_mapping_helper_no.csv\` as a basis for predicting which emission factors belong to a particular account. Do not reference or require the \`unmapped_accounts.csv\` file; any unmapped data should be provided directly within the user prompts.
-
-**User:**
-${prompt}
-
-**Unmapped Accounts Data:**
-\`\`\`
-${unmappedTable}
-\`\`\`
-`;
-
-    // Prepare messages for OpenAI Chat Completion
-    const messages = [
-      {
-        role: "system",
-        content: `You are an AI assistant specialized in environmental accounting and financial analysis. You have access to the following context:
-
-${fileContext}`,
-      },
-      {
-        role: "user",
-        content: fullPrompt,
-      },
-    ];
-
-    // Construct the request payload
-    const requestPayload = {
-      model: "gpt-4", // Ensure you have access to this model
-      messages: messages,
-      temperature: 0.7, // Adjust as needed
-      max_tokens: 1500, // Adjust based on expected response length
-    };
-
-    // Log the request payload
-    logger.info("Generating AI response with payload:", requestPayload);
-
-    try {
-      const completion = await client.chat.completions.create(requestPayload);
-
-      const responseText = completion.choices[0].message.content;
-
-      // Log the response
-      logger.info("AI Generated Response:", responseText);
-
-      // Send the response back to the client
-      res.json({ response: responseText });
-    } catch (error) {
-      logger.error("Error generating AI response:", {
+      logger.error("Error processing accounts:", {
         message: error.response ? error.response.data : error.message,
       });
-      res
-        .status(500)
-        .json({ error: "An error occurred while generating the AI response." });
+      res.status(500).json({ error: "Failed to process accounts." });
     }
   }
 );
