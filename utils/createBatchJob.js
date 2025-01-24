@@ -1,5 +1,4 @@
-// utils/createBatchJob.js
-import { OpenAI } from "openai";
+import OpenAI from "openai";
 
 /**
  * Creates a batch job using the uploaded file.

@@ -1,5 +1,5 @@
 // utils/pollBatchStatus.js
-import { OpenAI } from "openai";
+import OpenAI from "openai";
 
 /**
  * Polls the status of a batch job until completion or failure.

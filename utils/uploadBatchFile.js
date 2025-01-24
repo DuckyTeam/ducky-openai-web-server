@@ -1,6 +1,6 @@
 // utils/uploadBatchFile.js
 import fs from "fs";
-import { OpenAI } from "openai";
+import OpenAI from "openai";
 
 /**
  * Uploads a batch input file to OpenAI's Files API.

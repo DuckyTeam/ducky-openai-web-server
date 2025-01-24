@@ -14,6 +14,7 @@ import createBatchJob from "./utils/createBatchJob.js";
 import pollBatchStatus from "./utils/pollBatchStatus.js";
 import retrieveBatchResults from "./utils/retrieveBatchResults.js";
 import parseBatchResults from "./utils/parseBatchResults.js";
+import OpenAI from "openai";
 import fs from "fs/promises";
 
 // Handle __dirname in ESM
@@ -99,12 +100,10 @@ app.post(
       logger.error("Error initiating batch job:", {
         message: error.response ? error.response.data : error.message,
       });
-      res
-        .status(500)
-        .json({
-          error: "Failed to initiate batch job.",
-          details: error.message,
-        });
+      res.status(500).json({
+        error: "Failed to initiate batch job.",
+        details: error.message,
+      });
     }
   }
 );
@@ -125,16 +124,14 @@ app.get("/batch-status/:batchId", async (req, res) => {
       .json({ error: "Failed to check batch status.", details: error.message });
   }
 });
-
-// Endpoint to retrieve batch results
 app.get("/batch-results/:batchId", async (req, res) => {
   const { batchId } = req.params;
 
   try {
+    // Initialize OpenAI client
+    const openai = new OpenAI();
+
     // Retrieve batch metadata
-    const openai = new OpenAI({
-      apiKey: process.env.OPENAI_API_KEY,
-    });
     const batch = await openai.batches.retrieve(batchId);
 
     if (batch.status !== "completed") {
@@ -145,13 +142,20 @@ app.get("/batch-results/:batchId", async (req, res) => {
         });
     }
 
-    // Retrieve output file
+    // Retrieve output file ID
     const outputFileId = batch.output_file_id;
+
+    // **Debugging Statement:**
+    console.log("Output File ID:", outputFileId, "Type:", typeof outputFileId);
+
+    // Define destination path for saving results
     const destinationPath = path.join(
       __dirname,
       "results",
       `batch_output_${batchId}.jsonl`
     );
+
+    // Retrieve and save batch results
     await retrieveBatchResults(outputFileId, destinationPath);
 
     // Parse the results
