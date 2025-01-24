@@ -10,7 +10,6 @@ import { dirname } from "path";
 import rateLimit from "express-rate-limit";
 import { body, validationResult } from "express-validator";
 import winston from "winston";
-import { createObjectCsvWriter } from "csv-writer";
 
 // Handle __dirname in ESM
 const __filename = fileURLToPath(import.meta.url);
@@ -60,25 +59,13 @@ const loadSystemPrompt = async () => {
   }
 };
 
-// Define CSV Schema for Mapped Accounts
-const csvHeaders = [
-  { id: "accountNumber", title: "accountNumber" },
-  { id: "accountName", title: "accountName" },
-  { id: "mapping", title: "mapping" },
-];
-
-// Function to Save AI Response as CSV
-const saveResponseAsCSV = async (csvData, outputPath) => {
-  const csvWriter = createObjectCsvWriter({
-    path: outputPath,
-    header: csvHeaders,
-  });
-
+// Function to Save AI Response as Raw Text
+const saveRawResponse = async (rawData, outputPath) => {
   try {
-    await csvWriter.writeRecords(csvData);
-    logger.info(`Saved AI response to CSV at ${outputPath}`);
+    await fs.writeFile(outputPath, rawData, "utf-8");
+    logger.info(`Saved AI response to file at ${outputPath}`);
   } catch (error) {
-    logger.error("Error saving CSV:", { message: error.message });
+    logger.error("Error saving raw response:", { message: error.message });
     throw error;
   }
 };
@@ -112,19 +99,15 @@ app.post(
 
       // Construct User Prompt
       let userPrompt =
-        "Please process the following unmapped accounts and assign appropriate mappings based on historical data. Provide the output in CSV format matching the mapped_accounts.csv file structure, including columns for accountNumber, accountName, and mapping.\n\n";
+        "Please process the following unmapped accounts and assign appropriate mappings based on historical data. Provide the output in a clear and structured format.\n\n";
       userPrompt += "Unmapped Accounts Data:\n";
-      userPrompt += "| accountNumber | accountName | \n";
+      userPrompt += "| accountNumber | accountName |\n";
       userPrompt += "|---------------|-------------|\n";
       unmappedAccountsData.forEach((account) => {
         // Escape double quotes in accountName
         const accountName = account["accountName"].replace(/"/g, '""');
         userPrompt += `| ${account["accountNumber"]} | "${accountName}" |\n`;
       });
-
-      // Combine System and User Prompts
-      // Note: In Chat API, system and user prompts are separate; no need to combine them.
-      // However, system prompt is provided as a separate message.
 
       // Send Request to OpenAI's Chat Completion API
       const response = await axios.post(
@@ -136,7 +119,7 @@ app.post(
             { role: "user", content: userPrompt },
           ],
           temperature: 0.3, // Adjust for determinism
-          max_tokens: 1000, // Adjust based on expected response length
+          max_tokens: 1500, // Adjust based on expected response length
           n: 1,
           stop: null,
         },
@@ -153,68 +136,19 @@ app.post(
       // Log the AI response
       logger.info("AI Response:", aiResponse);
 
-      // Parse AI Response to CSV Format
-      // Basic parsing assuming the AI returns well-formatted CSV
-      const lines = aiResponse.trim().split("\n");
-
-      // Validate CSV headers
-      const responseHeaders = lines[0]
-        .split(",")
-        .map((header) => header.trim().toLowerCase());
-      const expectedHeaders = ["accountnumber", "accountname", "mapping"];
-
-      const headersMatch = expectedHeaders.every(
-        (header, index) => header === responseHeaders[index]
-      );
-
-      if (!headersMatch) {
-        logger.error("AI response headers do not match the expected format.");
-        return res
-          .status(500)
-          .json({
-            error: "AI response format mismatch. Please check the AI's output.",
-          });
-      }
-
-      // Process each line into JSON objects
-      const csvData = lines.slice(1).map((line) => {
-        const values = line.split(",").map((value) => value.trim());
-
-        // Handle cases where accountName might contain commas and be enclosed in quotes
-        let accountNumber, accountName, mapping;
-
-        if (values.length > 3) {
-          // Join all values beyond the first two for accountName and mapping
-          accountNumber = values[0];
-          // Assuming accountName is the second value, possibly enclosed in quotes
-          accountName = values[1].replace(/^"|"$/g, "").replace(/""/g, '"');
-          mapping = values.slice(2).join(", ");
-        } else {
-          accountNumber = values[0];
-          accountName = values[1].replace(/^"|"$/g, "").replace(/""/g, '"');
-          mapping = values[2];
-        }
-
-        return {
-          accountNumber,
-          accountName,
-          mapping,
-        };
-      });
-
       // Define Output Path
       const timestamp = Date.now();
       const outputPath = path.join(
         __dirname,
         "results",
-        `processed_accounts_${timestamp}.csv`
+        `raw_response_${timestamp}.txt`
       );
 
       // Ensure Results Directory Exists
       await fs.mkdir(path.dirname(outputPath), { recursive: true });
 
-      // Save CSV Data
-      await saveResponseAsCSV(csvData, outputPath);
+      // Save Raw AI Response
+      await saveRawResponse(aiResponse, outputPath);
 
       // Respond to Client
       res.json({ message: "Accounts processed successfully.", outputPath });
