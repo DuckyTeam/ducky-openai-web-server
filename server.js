@@ -2,14 +2,19 @@
 import dotenv from "dotenv";
 dotenv.config();
 import express from "express";
-import axios from "axios";
-import fs from "fs/promises";
 import path from "path";
 import { fileURLToPath } from "url";
 import { dirname } from "path";
 import rateLimit from "express-rate-limit";
 import { body, validationResult } from "express-validator";
 import winston from "winston";
+import createBatchInputFile from "./utils/createBatchInput.js";
+import uploadBatchFile from "./utils/uploadBatchFile.js";
+import createBatchJob from "./utils/createBatchJob.js";
+import pollBatchStatus from "./utils/pollBatchStatus.js";
+import retrieveBatchResults from "./utils/retrieveBatchResults.js";
+import parseBatchResults from "./utils/parseBatchResults.js";
+import fs from "fs/promises";
 
 // Handle __dirname in ESM
 const __filename = fileURLToPath(import.meta.url);
@@ -43,117 +48,9 @@ const limiter = rateLimit({
 });
 app.use(limiter);
 
-// Function to parse JSONL files
-const parseJSONLFile = async (filePath) => {
-  try {
-    const data = await fs.readFile(filePath, "utf-8");
-    const lines = data.trim().split("\n");
-    return lines.map((line) => JSON.parse(line));
-  } catch (error) {
-    logger.error(`Error reading or parsing ${filePath}:`, {
-      message: error.message,
-    });
-    throw error;
-  }
-};
-
-// Function to load all necessary data files
-const loadDataFiles = async () => {
-  try {
-    const mappedAccountsPath = path.join(
-      __dirname,
-      "files",
-      "mapped_accounts.jsonl"
-    );
-    const mappingHelperPath = path.join(
-      __dirname,
-      "files",
-      "accounts_mapping_helper_no.jsonl"
-    );
-    const emissionFactorsPath = path.join(
-      __dirname,
-      "files",
-      "emission_factors.jsonl"
-    );
-
-    const [mappedAccounts, mappingHelper, emissionFactors] = await Promise.all([
-      parseJSONLFile(mappedAccountsPath),
-      parseJSONLFile(mappingHelperPath),
-      parseJSONLFile(emissionFactorsPath),
-    ]);
-
-    return { mappedAccounts, mappingHelper, emissionFactors };
-  } catch (error) {
-    logger.error("Error loading data files:", { message: error.message });
-    throw error;
-  }
-};
-
-// Function to construct the AI prompt
-const constructPrompt = (
-  unmappedAccounts,
-  mappedAccounts,
-  emissionFactors,
-  mappingHelper
-) => {
-  // Example: Creating a mapping dictionary from mappedAccounts
-  const mappingDict = {};
-  mappedAccounts.forEach((account) => {
-    mappingDict[account.accountNumber] = {
-      accountName: account.accountName,
-      mapping: account.mapping,
-    };
-  });
-
-  // Example: Creating an emission factors dictionary
-  const emissionFactorDict = {};
-  emissionFactors.forEach((factor) => {
-    emissionFactorDict[factor.category] = factor.value;
-  });
-
-  // Construct the prompt
-  let prompt = `
-You are an AI assistant specialized in environmental accounting and financial analysis. You have access to the following data:
-
-**Mapped Accounts:**
-${JSON.stringify(mappingDict, null, 2)}
-
-**Emission Factors:**
-${JSON.stringify(emissionFactorDict, null, 2)}
-
-**Mapping Helper (Norwegian):**
-${JSON.stringify(mappingHelper, null, 2)}
-
-Your task is to process the following unmapped accounts and assign appropriate mappings and emission factors based on the historical data provided above. Provide the output in CSV format with the following columns: accountNumber, accountName, mapping, emissionFactor.
-
-**Unmapped Accounts:**
-| accountNumber | accountName |
-|---------------|-------------|
-${unmappedAccounts
-  .map(
-    (acc) =>
-      `| ${acc.accountNumber} | "${acc.accountName.replace(/"/g, '""')}" |`
-  )
-  .join("\n")}
-`;
-
-  return prompt;
-};
-
-// Function to save raw AI response
-const saveRawResponse = async (rawData, outputPath) => {
-  try {
-    await fs.writeFile(outputPath, rawData, "utf-8");
-    logger.info(`Saved AI response to file at ${outputPath}`);
-  } catch (error) {
-    logger.error("Error saving raw response:", { message: error.message });
-    throw error;
-  }
-};
-
-// POST /process-accounts endpoint
+// Endpoint to initiate batch processing
 app.post(
-  "/process-accounts",
+  "/initiate-batch",
   [
     body("unmappedAccountsData")
       .isArray({ min: 1 })
@@ -175,77 +72,104 @@ app.post(
     const { unmappedAccountsData } = req.body;
 
     try {
-      // Load System Prompt
-      const systemPromptPath = path.join(
-        __dirname,
-        "prompts",
-        "system_prompt.txt"
+      // 1. Create Batch Input File
+      const batchInputPath = path.join(__dirname, "batch_input.jsonl");
+      createBatchInputFile(unmappedAccountsData, batchInputPath);
+      logger.info(`Batch input file created at ${batchInputPath}`);
+
+      // 2. Upload Batch Input File
+      const uploadedFile = await uploadBatchFile(batchInputPath);
+      logger.info(`Batch input file uploaded with ID: ${uploadedFile.id}`);
+
+      // 3. Create Batch Job
+      const batchJob = await createBatchJob(
+        uploadedFile.id,
+        "/v1/chat/completions",
+        "24h",
+        { project: "EmissionFactorAssignment" } // Optional metadata
       );
-      const systemPrompt = await fs.readFile(systemPromptPath, "utf-8");
+      logger.info(`Batch job created with ID: ${batchJob.id}`);
 
-      // Load Data Files
-      const { mappedAccounts, mappingHelper, emissionFactors } =
-        await loadDataFiles();
-
-      // Construct Prompt
-      const prompt = constructPrompt(
-        unmappedAccountsData,
-        mappedAccounts,
-        emissionFactors,
-        mappingHelper
-      );
-
-      // Send Request to OpenAI's Chat Completion API
-      const response = await axios.post(
-        "https://api.openai.com/v1/chat/completions",
-        {
-          model: "gpt-4", // Ensure your API plan supports this
-          messages: [
-            { role: "system", content: systemPrompt },
-            { role: "user", content: prompt },
-          ],
-          temperature: 0.3, // Adjust for determinism
-          max_tokens: 1500, // Adjust based on expected response length
-          n: 1,
-          stop: null,
-        },
-        {
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-          },
-        }
-      );
-
-      const aiResponse = response.data.choices[0].message.content;
-
-      // Log the AI response
-      logger.info("AI Response:", aiResponse);
-
-      // Define Output Path
-      const timestamp = Date.now();
-      const outputPath = path.join(
-        __dirname,
-        "results",
-        `raw_response_${timestamp}.txt`
-      );
-
-      // Ensure Results Directory Exists
-      await fs.mkdir(path.dirname(outputPath), { recursive: true });
-
-      // Save Raw AI Response
-      await saveRawResponse(aiResponse, outputPath);
-
-      // Respond to Client
-      res.json({ message: "Accounts processed successfully.", outputPath });
+      // 4. Respond to Client with Batch ID
+      res.json({
+        message: "Batch job initiated successfully.",
+        batchId: batchJob.id,
+      });
     } catch (error) {
-      logger.error("Error processing accounts:", {
+      logger.error("Error initiating batch job:", {
         message: error.response ? error.response.data : error.message,
       });
-      res.status(500).json({ error: "Failed to process accounts." });
+      res
+        .status(500)
+        .json({
+          error: "Failed to initiate batch job.",
+          details: error.message,
+        });
     }
   }
 );
+
+// Endpoint to check batch status
+app.get("/batch-status/:batchId", async (req, res) => {
+  const { batchId } = req.params;
+
+  try {
+    const status = await pollBatchStatus(batchId);
+    res.json({ batchId, status });
+  } catch (error) {
+    logger.error("Error checking batch status:", {
+      message: error.response ? error.response.data : error.message,
+    });
+    res
+      .status(500)
+      .json({ error: "Failed to check batch status.", details: error.message });
+  }
+});
+
+// Endpoint to retrieve batch results
+app.get("/batch-results/:batchId", async (req, res) => {
+  const { batchId } = req.params;
+
+  try {
+    // Retrieve batch metadata
+    const openai = new OpenAI({
+      apiKey: process.env.OPENAI_API_KEY,
+    });
+    const batch = await openai.batches.retrieve(batchId);
+
+    if (batch.status !== "completed") {
+      return res
+        .status(400)
+        .json({
+          error: `Batch is not completed. Current status: ${batch.status}`,
+        });
+    }
+
+    // Retrieve output file
+    const outputFileId = batch.output_file_id;
+    const destinationPath = path.join(
+      __dirname,
+      "results",
+      `batch_output_${batchId}.jsonl`
+    );
+    await retrieveBatchResults(outputFileId, destinationPath);
+
+    // Parse the results
+    const parsedResults = await parseBatchResults(destinationPath);
+
+    res.json({ batchId, results: parsedResults });
+  } catch (error) {
+    logger.error("Error retrieving batch results:", {
+      message: error.response ? error.response.data : error.message,
+    });
+    res
+      .status(500)
+      .json({
+        error: "Failed to retrieve batch results.",
+        details: error.message,
+      });
+  }
+});
 
 // Start the server
 app.listen(port, () => {
