@@ -43,23 +43,104 @@ const limiter = rateLimit({
 });
 app.use(limiter);
 
-// Load System Prompt
-const loadSystemPrompt = async () => {
+// Function to parse JSONL files
+const parseJSONLFile = async (filePath) => {
   try {
-    const systemPromptPath = path.join(
-      __dirname,
-      "prompts",
-      "system_prompt.txt"
-    );
-    const systemPrompt = await fs.readFile(systemPromptPath, "utf-8");
-    return systemPrompt;
+    const data = await fs.readFile(filePath, "utf-8");
+    const lines = data.trim().split("\n");
+    return lines.map((line) => JSON.parse(line));
   } catch (error) {
-    logger.error("Error loading system prompt:", { message: error.message });
+    logger.error(`Error reading or parsing ${filePath}:`, {
+      message: error.message,
+    });
     throw error;
   }
 };
 
-// Function to Save AI Response as Raw Text
+// Function to load all necessary data files
+const loadDataFiles = async () => {
+  try {
+    const mappedAccountsPath = path.join(
+      __dirname,
+      "files",
+      "mapped_accounts.jsonl"
+    );
+    const mappingHelperPath = path.join(
+      __dirname,
+      "files",
+      "accounts_mapping_helper_no.jsonl"
+    );
+    const emissionFactorsPath = path.join(
+      __dirname,
+      "files",
+      "emission_factors.jsonl"
+    );
+
+    const [mappedAccounts, mappingHelper, emissionFactors] = await Promise.all([
+      parseJSONLFile(mappedAccountsPath),
+      parseJSONLFile(mappingHelperPath),
+      parseJSONLFile(emissionFactorsPath),
+    ]);
+
+    return { mappedAccounts, mappingHelper, emissionFactors };
+  } catch (error) {
+    logger.error("Error loading data files:", { message: error.message });
+    throw error;
+  }
+};
+
+// Function to construct the AI prompt
+const constructPrompt = (
+  unmappedAccounts,
+  mappedAccounts,
+  emissionFactors,
+  mappingHelper
+) => {
+  // Example: Creating a mapping dictionary from mappedAccounts
+  const mappingDict = {};
+  mappedAccounts.forEach((account) => {
+    mappingDict[account.accountNumber] = {
+      accountName: account.accountName,
+      mapping: account.mapping,
+    };
+  });
+
+  // Example: Creating an emission factors dictionary
+  const emissionFactorDict = {};
+  emissionFactors.forEach((factor) => {
+    emissionFactorDict[factor.category] = factor.value;
+  });
+
+  // Construct the prompt
+  let prompt = `
+You are an AI assistant specialized in environmental accounting and financial analysis. You have access to the following data:
+
+**Mapped Accounts:**
+${JSON.stringify(mappingDict, null, 2)}
+
+**Emission Factors:**
+${JSON.stringify(emissionFactorDict, null, 2)}
+
+**Mapping Helper (Norwegian):**
+${JSON.stringify(mappingHelper, null, 2)}
+
+Your task is to process the following unmapped accounts and assign appropriate mappings and emission factors based on the historical data provided above. Provide the output in CSV format with the following columns: accountNumber, accountName, mapping, emissionFactor.
+
+**Unmapped Accounts:**
+| accountNumber | accountName |
+|---------------|-------------|
+${unmappedAccounts
+  .map(
+    (acc) =>
+      `| ${acc.accountNumber} | "${acc.accountName.replace(/"/g, '""')}" |`
+  )
+  .join("\n")}
+`;
+
+  return prompt;
+};
+
+// Function to save raw AI response
 const saveRawResponse = async (rawData, outputPath) => {
   try {
     await fs.writeFile(outputPath, rawData, "utf-8");
@@ -95,19 +176,24 @@ app.post(
 
     try {
       // Load System Prompt
-      const systemPrompt = await loadSystemPrompt();
+      const systemPromptPath = path.join(
+        __dirname,
+        "prompts",
+        "system_prompt.txt"
+      );
+      const systemPrompt = await fs.readFile(systemPromptPath, "utf-8");
 
-      // Construct User Prompt
-      let userPrompt =
-        "Please process the following unmapped accounts and assign appropriate mappings based on historical data. Provide the output in a clear and structured format.\n\n";
-      userPrompt += "Unmapped Accounts Data:\n";
-      userPrompt += "| accountNumber | accountName |\n";
-      userPrompt += "|---------------|-------------|\n";
-      unmappedAccountsData.forEach((account) => {
-        // Escape double quotes in accountName
-        const accountName = account["accountName"].replace(/"/g, '""');
-        userPrompt += `| ${account["accountNumber"]} | "${accountName}" |\n`;
-      });
+      // Load Data Files
+      const { mappedAccounts, mappingHelper, emissionFactors } =
+        await loadDataFiles();
+
+      // Construct Prompt
+      const prompt = constructPrompt(
+        unmappedAccountsData,
+        mappedAccounts,
+        emissionFactors,
+        mappingHelper
+      );
 
       // Send Request to OpenAI's Chat Completion API
       const response = await axios.post(
@@ -116,7 +202,7 @@ app.post(
           model: "gpt-4", // Ensure your API plan supports this
           messages: [
             { role: "system", content: systemPrompt },
-            { role: "user", content: userPrompt },
+            { role: "user", content: prompt },
           ],
           temperature: 0.3, // Adjust for determinism
           max_tokens: 1500, // Adjust based on expected response length

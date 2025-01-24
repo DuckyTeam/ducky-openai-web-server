@@ -1,0 +1,55 @@
+To process the unmapped accounts data and assign appropriate emission factors based on historical mappings, I would need to access the provided data files and perform an analysis. However, as an AI text model, I don't have the ability to access or process files directly. 
+
+But I can guide you on how you can do it:
+
+1. Load the historical mappings and emission factors data from the provided files.
+2. For each unmapped account, find the closest matching account in the historical data. You can use text similarity algorithms like Levenshtein distance or cosine similarity for this.
+3. Once you find the closest match, assign the emission factor of the matched account to the unmapped account.
+4. Calculate the estimated emissions if you have the spend data.
+5. Finally, create a CSV file with columns for Account ID, Account Name, Spend ($), Emission Factor, and Estimated Emissions.
+
+Here is a pseudo-code for the above steps:
+
+```python
+import pandas as pd
+from sklearn.metrics.pairwise import cosine_similarity
+from sklearn.feature_extraction.text import CountVectorizer
+
+# Load the historical mappings and emission factors data
+mapped_accounts = pd.read_json('mapped_accounts.jsonl', lines=True)
+emission_factors = pd.read_json('emission_factors.jsonl', lines=True)
+
+# Initialize a CountVectorizer
+vectorizer = CountVectorizer().fit_transform(mapped_accounts['Account Name'])
+
+# Initialize an empty DataFrame for the output
+output = pd.DataFrame(columns=['Account ID', 'Account Name', 'Spend ($)', 'Emission Factor', 'Estimated Emissions'])
+
+# Process each unmapped account
+for account in unmapped_accounts:
+    # Calculate the cosine similarity with each account in the historical data
+    similarities = cosine_similarity(vectorizer.transform([account['accountName']]), vectorizer).flatten()
+    
+    # Find the index of the most similar account
+    index = similarities.argmax()
+    
+    # Assign the emission factor of the most similar account
+    emission_factor = emission_factors.loc[index, 'Emission Factor']
+    
+    # Calculate the estimated emissions (you need the spend data for this)
+    estimated_emissions = account['Spend ($)'] * emission_factor
+    
+    # Append the data to the output DataFrame
+    output = output.append({
+        'Account ID': account['accountNumber'],
+        'Account Name': account['accountName'],
+        'Spend ($)': account['Spend ($)'],
+        'Emission Factor': emission_factor,
+        'Estimated Emissions': estimated_emissions
+    }, ignore_index=True)
+
+# Save the output DataFrame to a CSV file
+output.to_csv('mapped_accounts.csv', index=False)
+```
+
+Please note that this is a simplified example and the actual code may vary depending on the exact format and structure of your data.
